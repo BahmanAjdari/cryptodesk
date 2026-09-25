@@ -48,40 +48,48 @@ def step_league(league: dict, frames: dict, cfg: dict, gate_allow: bool, verbose
     for name, meta in STRATS.items():
         st = league[name]
         seen = st.setdefault("seen", {})
-        # خروج‌ها (هر کندل فقط یک بار)
+
+        def _new_bars(df, prev):
+            try:
+                if prev:
+                    return df[df["time"] > pd.Timestamp(prev)]
+            except Exception:
+                pass
+            return df.iloc[[-1]]
+
+        # خروج‌ها: اجرای ترتیبی کندل‌های دیده‌نشده (کندل ورود مستثنی)
         for sym in list(st["positions"]):
             if sym not in frames:
                 continue
-            bar_t = str(frames[sym].iloc[-1]["time"])
-            if seen.get(sym) == bar_t:
-                continue
-            seen[sym] = bar_t
+            df = frames[sym]
             p = st["positions"][sym]
-            row = frames[sym].iloc[-1]
-            price = float(row["c"])
-            atr = float(row["atr14"]) if pd.notna(row["atr14"]) else 0.0
-            if atr <= 0:
-                continue
-            p["bars"] = p.get("bars", 0) + 1
-            reason, exit_px = None, price
-            if row["l"] <= p["sl"]:
-                reason, exit_px = "SL", p["sl"]
-            elif row["h"] >= p["tp"]:
-                reason, exit_px = "TP", p["tp"]
-            elif bool(row.get(meta["exit"], False)):
-                reason, exit_px = "SIGNAL", price
-            elif p["bars"] >= r["max_holding_candles"]:
-                reason, exit_px = "TIME", price
-            if reason:
-                proceeds = p["amount"] * exit_px * (1 - fee)
-                pnl = proceeds - p["cost"]
-                st["cash"] += proceeds
-                st["history"].append({"symbol": sym, "entry": p["entry"], "exit": exit_px,
-                                      "exit_time": str(row["time"]),
-                                      "reason": reason, "pnl": round(pnl, 0),
-                                      "pnl_pct": round(pnl / p["cost"] * 100, 2)})
-                del st["positions"][sym]
-                verbose(f"[LEAGUE:{name} EXIT:{reason}] {sym} {pnl:+,.0f}")
+            for _, row in _new_bars(df, seen.get(sym)).iterrows():
+                price = float(row["c"])
+                atr = float(row["atr14"]) if pd.notna(row["atr14"]) else 0.0
+                if atr <= 0:
+                    continue
+                p["bars"] = p.get("bars", 0) + 1
+                reason, exit_px = None, price
+                if row["l"] <= p["sl"]:
+                    reason, exit_px = "SL", p["sl"]
+                elif row["h"] >= p["tp"]:
+                    reason, exit_px = "TP", p["tp"]
+                elif bool(row.get(meta["exit"], False)):
+                    reason, exit_px = "SIGNAL", price
+                elif p["bars"] >= r["max_holding_candles"]:
+                    reason, exit_px = "TIME", price
+                if reason:
+                    proceeds = p["amount"] * exit_px * (1 - fee)
+                    pnl = proceeds - p["cost"]
+                    st["cash"] += proceeds
+                    st["history"].append({"symbol": sym, "entry": p["entry"], "exit": exit_px,
+                                          "exit_time": str(row["time"]),
+                                          "reason": reason, "pnl": round(pnl, 0),
+                                          "pnl_pct": round(pnl / p["cost"] * 100, 2)})
+                    del st["positions"][sym]
+                    verbose(f"[LEAGUE:{name} EXIT:{reason}] {sym} {pnl:+,.0f}")
+                    break
+            seen[sym] = str(df.iloc[-1]["time"])
         # ورودها
         if not gate_allow or len(st["positions"]) >= 2:
             continue
@@ -105,6 +113,7 @@ def step_league(league: dict, frames: dict, cfg: dict, gate_allow: bool, verbose
                 "sl": price - r["sl_atr_mult"] * atr, "tp": price + r["tp_atr_mult"] * atr,
                 "bars": 0, "entry_time": str(last["time"]),
             }
+            seen[sym] = str(last["time"])  # کندل ورود برای خروج استفاده نمی‌شود
             verbose(f"[LEAGUE:{name} ENTER] {sym} @ {price:,.0f}")
             if len(st["positions"]) >= 2:
                 break

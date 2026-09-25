@@ -140,23 +140,79 @@ def scan_step(acct: dict, client, cfg: dict, coins=None, verbose=print,
             except Exception as e:
                 verbose(f"[!] ارسال پیام بله ناموفق: {e}")
 
-    # --- سقف ضرر روزانه (به‌وقت تهران) ---
+    # --- لنگر ارزش ابتدای روز (تهران) برای سقف ضرر روزانه ---
+    from zoneinfo import ZoneInfo
+    from datetime import datetime, timedelta
+    teh_now = datetime.now(ZoneInfo("Asia/Tehran"))
+    today = teh_now.date().isoformat()
+    anchor = acct.get("day_anchor")
+    if not anchor or anchor.get("date") != today:
+        prev_eq = acct["snapshots"][-1]["equity"] if acct.get("snapshots") else acct.get("starting_cash", 1)
+        anchor = {"date": today, "equity": prev_eq}
+        acct["day_anchor"] = anchor
     halted = acct.get("halted_until", 0) > now_ts
+    halted = acct.get("halted_until", 0) > now_ts
+
+    # --- مدیریت خروج‌ها: اجرای ترتیبی همه کندل‌های دیده‌نشده ---
+    # (کندل ورود برای خروج استفاده نمی‌شود؛ فاصله اسکن بیشتر از تایم‌فریم هم کندلی را جا نمی‌اندازد)
+    seen = acct.setdefault("seen", {})
+
+    def _new_bars(df, prev):
+        try:
+            if prev:
+                return df[df["time"] > pd.Timestamp(prev)]
+        except Exception:
+            pass
+        return df.iloc[[-1]]  # اولین بار: فقط آخرین کندل (بازپخش تاریخچه ممنوع)
+
+    for sym in list(acct["positions"]):
+        if sym not in frames:
+            continue
+        df = frames[sym]
+        p = acct["positions"][sym]
+        for _, row in _new_bars(df, seen.get(sym)).iterrows():
+            price = float(row["c"])
+            atr = float(row["atr14"]) if pd.notna(row["atr14"]) else 0.0
+            p["bars"] = p.get("bars", 0) + 1
+            if trail_m > 0 and atr > 0:
+                p["peak"] = max(p.get("peak", p["entry"]), float(row["h"]))
+                p["sl"] = max(p["sl"], p["peak"] - trail_m * atr)
+            reason = None
+            if row["l"] <= p["sl"]:
+                reason, exit_px = "SL", p["sl"]
+            elif row["h"] >= p["tp"]:
+                reason, exit_px = "TP", p["tp"]
+            elif bool(row.get("exit_long", False)):
+                reason, exit_px = "SIGNAL", price
+            elif p["bars"] >= r["max_holding_candles"]:
+                reason, exit_px = "TIME", price
+            if reason:
+                proceeds = p["amount"] * exit_px * (1 - fee)
+                pnl = proceeds - p["cost"]
+                acct["cash"] += proceeds
+                acct["history"].append({
+                    "symbol": sym, "entry": p["entry"], "exit": exit_px,
+                    "entry_time": p.get("entry_time"), "exit_time": str(row["time"]),
+                    "bars": p["bars"],
+                    "reason": reason, "pnl": round(pnl, 0),
+                    "pnl_pct": round(pnl / p["cost"] * 100, 2),
+                })
+                del acct["positions"][sym]
+                verbose(f"[EXIT:{reason}] {sym} pnl={pnl:,.0f} تومان")
+                if notify:
+                    try:
+                        notify.exit(sym, p["entry"], exit_px, p["cost"], pnl, reason)
+                    except Exception as e:
+                        verbose(f"[!] ارسال پیام بله ناموفق: {e}")
+                break
+        seen[sym] = str(df.iloc[-1]["time"])
+
+    # --- سقف ضرر روزانه: ارزش فعلی (پس از خروج‌ها) در برابر ارزش ابتدای روز ---
     if not halted and day_loss_lim > 0:
-        from zoneinfo import ZoneInfo
-        from datetime import datetime, timedelta
-        teh = datetime.now(ZoneInfo("Asia/Tehran"))
-        today = teh.date().isoformat()
-        realized = sum(t.get("pnl", 0) for t in acct.get("history", [])
-                       if _teh_day(t.get("exit_time")) == today)
-        unreal = sum((prices.get(s, p["entry"]) - p["entry"]) * p["amount"]
-                     for s, p in acct["positions"].items())
-        day_pnl = realized + unreal
-        snaps = [s for s in acct.get("snapshots", [])
-                 if _teh_day(s.get("time")) == today]
-        ref_eq = snaps[0]["equity"] if snaps else acct.get("starting_cash", 1)
-        if day_pnl <= -day_loss_lim / 100 * ref_eq:
-            nxt = (teh.date() + timedelta(days=1))
+        eq_now = equity(acct, prices)
+        day_pnl = eq_now - anchor["equity"]
+        if day_pnl <= -day_loss_lim / 100 * anchor["equity"]:
+            nxt = (teh_now.date() + timedelta(days=1))
             midnight = datetime(nxt.year, nxt.month, nxt.day, tzinfo=ZoneInfo("Asia/Tehran")).timestamp()
             acct["halted_until"] = midnight
             halted = True
@@ -164,51 +220,6 @@ def scan_step(acct: dict, client, cfg: dict, coins=None, verbose=print,
             if notify:
                 try:
                     notify.daily_halt(day_pnl, day_loss_lim)
-                except Exception as e:
-                    verbose(f"[!] ارسال پیام بله ناموفق: {e}")
-
-    # --- مدیریت خروج‌ها (هر کندل بسته‌شده فقط یک بار) ---
-    seen = acct.setdefault("seen", {})
-    for sym in list(acct["positions"]):
-        if sym not in frames:
-            continue
-        bar_t = str(frames[sym].iloc[-1]["time"])
-        if seen.get(sym) == bar_t:
-            continue  # این کندل در اسکن قبلی پردازش شده؛ شمارنده و حدها دوباره حساب نمی‌شود
-        seen[sym] = bar_t
-        p = acct["positions"][sym]
-        row = frames[sym].iloc[-1]
-        price = float(row["c"])
-        atr = float(row["atr14"]) if pd.notna(row["atr14"]) else 0.0
-        p["bars"] = p.get("bars", 0) + 1
-        if trail_m > 0 and atr > 0:
-            p["peak"] = max(p.get("peak", p["entry"]), float(row["h"]))
-            p["sl"] = max(p["sl"], p["peak"] - trail_m * atr)
-        reason = None
-        if row["l"] <= p["sl"]:
-            reason, exit_px = "SL", p["sl"]
-        elif row["h"] >= p["tp"]:
-            reason, exit_px = "TP", p["tp"]
-        elif bool(row.get("exit_long", False)):
-            reason, exit_px = "SIGNAL", price
-        elif p["bars"] >= r["max_holding_candles"]:
-            reason, exit_px = "TIME", price
-        if reason:
-            proceeds = p["amount"] * exit_px * (1 - fee)
-            pnl = proceeds - p["cost"]
-            acct["cash"] += proceeds
-            acct["history"].append({
-                "symbol": sym, "entry": p["entry"], "exit": exit_px,
-                "entry_time": p.get("entry_time"), "exit_time": str(row["time"]),
-                "bars": p["bars"],
-                "reason": reason, "pnl": round(pnl, 0),
-                "pnl_pct": round(pnl / p["cost"] * 100, 2),
-            })
-            del acct["positions"][sym]
-            verbose(f"[EXIT:{reason}] {sym} pnl={pnl:,.0f} تومان")
-            if notify:
-                try:
-                    notify.exit(sym, p["entry"], exit_px, p["cost"], pnl, reason)
                 except Exception as e:
                     verbose(f"[!] ارسال پیام بله ناموفق: {e}")
 
@@ -256,6 +267,7 @@ def scan_step(acct: dict, client, cfg: dict, coins=None, verbose=print,
                 "bars": 0, "peak": price,
                 "entry_time": str(frames[sym].iloc[-1]["time"]),
             }
+            seen[sym] = str(frames[sym].iloc[-1]["time"])  # کندل ورود برای خروج استفاده نمی‌شود
             verbose(f"[ENTER] {sym} @ {price:,.0f} مبلغ {cost:,.0f} تومان")
             entered.add(sym)
             if notify:

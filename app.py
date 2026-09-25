@@ -473,6 +473,14 @@ with tab5:
         # --- نمایش وضعیت (فقط خواندنی، بدون معامله) ---
         a = paper_load()
         _now = time.time()
+        _tr = float(a.get("trail_atr", 0) or 0)
+        _kd = float(a.get("kill_drop_pct", 0) or 0)
+        _dl = float(a.get("max_daily_loss_pct", 0) or 0)
+        st.caption(f"🛡️ ریسک فعال: تریلینگ {'✅ روشن (' + str(_tr) + '×)' if _tr > 0 else '❌ خاموش'} | "
+                   f"کیل‌سوییچ {'✅ ' + str(_kd) + '٪' if _kd > 0 else '❌ خاموش'} | "
+                   f"سقف ضرر روزانه {'✅ ' + str(_dl) + '٪' if _dl > 0 else '❌ خاموش'} | "
+                   f"حد ضرر {a.get('sl_atr')}× / حد سود {a.get('tp_atr')}×")
+        _now = time.time()
         if a.get("kill_until", 0) > _now:
             st.warning("🚨 دوره خنک‌سازی کیل‌سوییچ فعال است — خرید جدید متوقف تا پایان دوره.")
         if a.get("halted_until", 0) > _now:
