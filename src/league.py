@@ -30,6 +30,16 @@ def new_league() -> dict:
             for name in STRATS}
 
 
+def ensure_league(league: dict) -> dict:
+    """شرکت‌کنندگان جدید (مثل پولبک) را به لیگ‌های ذخیره‌شده قدیمی اضافه می‌کند."""
+    if league is None:
+        return new_league()
+    for name in STRATS:
+        if name not in league:
+            league[name] = {"cash": float(CAPITAL_EACH), "positions": {}, "history": []}
+    return league
+
+
 def step_league(league: dict, frames: dict, cfg: dict, gate_allow: bool, verbose=print):
     """یک دور برای هر ۴ استراتژی. frames: {symbol: df(has sig/exit/atr14/exit_long)}"""
     r = cfg["risk"]

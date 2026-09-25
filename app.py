@@ -521,14 +521,14 @@ with tab5:
 
 # ---------- تب ۶: مسابقه استراتژی‌ها ----------
 with tab6:
-    from src.league import STRATS, RULES_FA, CAPITAL_EACH, league_equity, league_stats, new_league
+    from src.league import STRATS, RULES_FA, CAPITAL_EACH, league_equity, league_stats, new_league, ensure_league
     st.subheader("🏆 مسابقه استراتژی‌ها — کدوم بهتره؟")
     st.info(RULES_FA)
     acct6 = paper_load()
     if acct6 is None:
         st.warning("اول در تب 💼 پورتفو «شروع» را بزن تا مسابقه هم شروع شود.")
     else:
-        lg = acct6.get("league")
+        lg = ensure_league(acct6.get("league"))
         if lg is None:
             st.info("لیگ از اسکن بعدی دیمن شروع می‌شود. دکمه «همین الان اسکن کن» را در تب پورتفو بزن.")
         else:

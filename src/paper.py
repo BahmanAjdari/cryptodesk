@@ -289,9 +289,11 @@ def scan_step(acct: dict, client, cfg: dict, coins=None, verbose=print,
 
     # --- لیگ استراتژی‌ها ---
     try:
-        from .league import new_league, step_league
+        from .league import new_league, step_league, ensure_league
         if "league" not in acct:
             acct["league"] = new_league()
+        else:
+            acct["league"] = ensure_league(acct["league"])
         step_league(acct["league"], frames, cfg, gate["allow"], verbose)
     except Exception as e:
         verbose(f"[!] league: {e}")
