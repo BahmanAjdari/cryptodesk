@@ -62,13 +62,15 @@ def _teh_day(ts):
         return None
 
 
-def scan_step(acct: dict, client, cfg: dict, coins=None, verbose=print) -> dict:
-    """یک دور کامل: چک خروج‌ها + ورودهای جدید. تغییرات را در acct اعمال و ذخیره می‌کند."""
+def scan_step(acct: dict, client, cfg: dict, coins=None, verbose=print,
+              notify_opt=True) -> dict:
+    """یک دور کامل: چک خروج‌ها + ورودهای جدید. تغییرات را در acct اعمال و ذخیره می‌کند.
+    notify_opt=False پیام بله نمی‌فرستد (برای تست‌ها)."""
     from .strategies import apply_all
     from .screener import screen
     from . import news as newsmod
     from .notify import get_notifier
-    notify = get_notifier()
+    notify = get_notifier() if notify_opt else None
 
     coins = coins or acct.get("coins") or cfg.get("paper_coins",
                 ["BTC", "ETH", "SOL", "DOGE", "XRP", "BNB", "AVAX", "TRX", "LINK", "LTC", "USDT"])
