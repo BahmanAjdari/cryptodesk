@@ -30,7 +30,7 @@ RTL_COLS = {"symbol": "نماد", "last_close": "قیمت", "score_now": "امت
             "signal_now": "سیگنال", "enter_now": "ورود؟", "rsi": "RSI",
             "adx": "ADX", "ret_pct": "بازده٪", "winrate": "وین‌ریت٪",
             "pf": "پرافیت‌فکتور", "maxdd": "دراودان٪", "n_trades": "معاملات",
-            "rank_score": "رتبه"}
+            "rank_score": "رتبه", "rs_vs_btc": "قدرت به BTC٪", "quote": "بازار"}
 
 
 @st.cache_resource

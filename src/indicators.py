@@ -68,6 +68,7 @@ def add_all(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     c = df["c"]
     df["ema9"] = ema(c, 9)
+    df["ema20"] = ema(c, 20)
     df["ema21"] = ema(c, 21)
     df["ema50"] = ema(c, 50)
     df["ema200"] = ema(c, 200)

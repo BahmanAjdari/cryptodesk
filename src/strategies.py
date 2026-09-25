@@ -69,6 +69,25 @@ def strat_boll_squeeze(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def strat_pullback(df: pd.DataFrame) -> pd.DataFrame:
+    """۵) پولبک در روند: روند صعودی + برگشت قیمت به EMA20 + کندل صعودی که دوباره بالای آن ببندد.
+    عمداً خارج از اجماع ورود است (اول باید در لیگ ارزشش را ثابت کند)."""
+    df = df.copy()
+    uptrend = (df["c"] > df["ema50"]) & (df["ema50"] > df["ema200"]) & (df["adx14"] > 20)
+    touched = df["l"] <= df["ema20"]
+    touched_recent = touched.rolling(3).max().eq(1)
+    reclaim = (df["c"] > df["ema20"]) & (df["c"] > df["o"])
+    long = uptrend & touched_recent & reclaim & (df["rsi14"] < 70)
+    exit_ = (df["c"] < df["ema50"]) | (df["rsi14"] > 75)
+    df["sig_pb"] = 0
+    df.loc[long, "sig_pb"] = 1
+    df.loc[exit_, "sig_pb"] = -1
+    df["score_pb"] = 0.0
+    df.loc[long, "score_pb"] = 1.5
+    df["exit_pb"] = exit_
+    return df
+
+
 STRATS = {
     "trend": strat_ema_macd_trend,
     "meanrev": strat_rsi_meanrev,
@@ -81,6 +100,8 @@ def apply_all(df: pd.DataFrame, min_score: float = 2.0) -> pd.DataFrame:
     df = add_all(df)
     for fn in STRATS.values():
         df = fn(df)
+    # پولبک فعلاً فقط برای لیگ محاسبه می‌شود، نه اجماع ورود (تا ارزشش ثابت شود)
+    df = strat_pullback(df)
     sig_cols = ["sig_trend", "sig_mr", "sig_brk", "sig_sqz"]
     score_cols = ["score_trend", "score_mr", "score_brk", "score_sqz"]
     df["signal_sum"] = df[sig_cols].sum(axis=1)

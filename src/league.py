@@ -15,6 +15,7 @@ STRATS = {
     "meanrev": {"fa": "۲) میانگین‌بازگشتی (RSI)", "sig": "sig_mr", "exit": "exit_mr"},
     "breakout": {"fa": "۳) بریک‌اوت", "sig": "sig_brk", "exit": "exit_brk"},
     "squeeze": {"fa": "۴) اسکوییز بولینگر", "sig": "sig_sqz", "exit": "exit_sqz"},
+    "pullback": {"fa": "۵) پولبک در روند", "sig": "sig_pb", "exit": "exit_pb"},
 }
 
 RULES_FA = (
