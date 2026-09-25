@@ -92,7 +92,13 @@ with st.container(border=True):
     st.markdown("### 🚦 الان بخرم یا نه؟")
     try:
         _fg = get_fng()
-        _btc = apply_all(fetch("BTCUSDT", "60", 500))
+        # دقیقاً همان داده‌ای که دیمن استفاده می‌کند (BTCIRT + تایم‌فریم پورتفو) تا چراغ با عمل یکی باشد
+        try:
+            _st = paper_load()
+            _ptf = str((_st or {}).get("timeframe", cfg["timeframe"]))
+        except Exception:
+            _ptf = str(cfg["timeframe"])
+        _btc = apply_all(fetch("BTCIRT", _ptf, 500))
         _reg = newsmod.market_regime(_btc, cfg["regime"]["adx_trend_threshold"])
         _gate = newsmod.trade_gate(cfg, _fg, {"score": 0, "n": 0}, _reg)
         if _gate["allow"]:
@@ -319,7 +325,9 @@ with tab4:
     c1, c2 = st.columns(2)
     c1.metric("شاخص ترس و طمع", f"{fg['value']} ({fg.get('label', '')})", f"میانگین هفته: {fg['trend']:.0f}")
     try:
-        btc = apply_all(fetch("BTCUSDT", "60", 500))
+        _st4 = paper_load()
+        _ptf4 = str((_st4 or {}).get("timeframe", cfg["timeframe"]))
+        btc = apply_all(fetch("BTCIRT", _ptf4, 500))
         reg = newsmod.market_regime(btc, cfg["regime"]["adx_trend_threshold"])
         c2.metric("رژیم BTC", reg["regime"], f"ADX {reg.get('adx')}")
         gate = newsmod.trade_gate(cfg, fg, {"score": 0, "n": 0}, reg)
