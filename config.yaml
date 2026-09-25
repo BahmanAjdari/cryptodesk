@@ -55,6 +55,7 @@ risk:
   trailing_atr_mult: 0.0
 screener:
   min_day_volume_usdt: 50000
+  min_day_volume_irt: 10000000000
   min_signal_score: 2.0
 symbols:
 - BTCUSDT

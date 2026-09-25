@@ -165,10 +165,15 @@ def scan_step(acct: dict, client, cfg: dict, coins=None, verbose=print) -> dict:
                 except Exception as e:
                     verbose(f"[!] ارسال پیام بله ناموفق: {e}")
 
-    # --- مدیریت خروج‌ها ---
+    # --- مدیریت خروج‌ها (هر کندل بسته‌شده فقط یک بار) ---
+    seen = acct.setdefault("seen", {})
     for sym in list(acct["positions"]):
         if sym not in frames:
             continue
+        bar_t = str(frames[sym].iloc[-1]["time"])
+        if seen.get(sym) == bar_t:
+            continue  # این کندل در اسکن قبلی پردازش شده؛ شمارنده و حدها دوباره حساب نمی‌شود
+        seen[sym] = bar_t
         p = acct["positions"][sym]
         row = frames[sym].iloc[-1]
         price = float(row["c"])

@@ -36,10 +36,15 @@ def step_league(league: dict, frames: dict, cfg: dict, gate_allow: bool, verbose
     prices = {s: float(frames[s].iloc[-1]["c"]) for s in frames}
     for name, meta in STRATS.items():
         st = league[name]
-        # خروج‌ها
+        seen = st.setdefault("seen", {})
+        # خروج‌ها (هر کندل فقط یک بار)
         for sym in list(st["positions"]):
             if sym not in frames:
                 continue
+            bar_t = str(frames[sym].iloc[-1]["time"])
+            if seen.get(sym) == bar_t:
+                continue
+            seen[sym] = bar_t
             p = st["positions"][sym]
             row = frames[sym].iloc[-1]
             price = float(row["c"])

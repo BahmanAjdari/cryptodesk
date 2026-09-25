@@ -18,9 +18,11 @@ def screen(symbols_data: dict, cfg: dict, min_score=None) -> pd.DataFrame:
                           fee_pct=cfg["risk"]["fee_pct"],
                           max_holding=cfg["risk"]["max_holding_candles"])
             last = df.iloc[-1]
-            day_vol = float(raw.tail(96)["v"].sum() * raw.tail(1)["c"].iloc[0])  # تخمین حجم دلاری
+            quote = "IRT" if sym.upper().endswith(("IRT", "RLS")) else "USDT"
+            day_vol = float(raw.tail(96)["v"].sum() * raw.tail(1)["c"].iloc[0])  # به ارز همان بازار
             rows.append({
                 "symbol": sym,
+                "quote": quote,
                 "last_close": round(float(last["c"]), 4),
                 "score_now": round(float(last["score_total"]), 2),
                 "signal_now": int(last["signal_sum"]),
@@ -32,13 +34,20 @@ def screen(symbols_data: dict, cfg: dict, min_score=None) -> pd.DataFrame:
                 "pf": bt["profit_factor"],
                 "maxdd": bt["max_drawdown_pct"],
                 "n_trades": bt["n_trades"],
-                "day_vol_usdt": round(day_vol, 0),
+                "day_vol": round(day_vol, 0),
             })
         except Exception as e:
             rows.append({"symbol": sym, "error": str(e)})
     out = pd.DataFrame(rows)
-    if "day_vol_usdt" in out.columns:
-        out = out[out["day_vol_usdt"] >= cfg["screener"]["min_day_volume_usdt"]]
+    if "day_vol" in out.columns:
+        # آستانه حجم بر حسب ارز همان بازار (تومان جدا از تتر)
+        def _pass(r):
+            if pd.isna(r.get("day_vol")):
+                return False
+            thr = cfg["screener"].get("min_day_volume_irt", 10_000_000_000) \
+                if r.get("quote") == "IRT" else cfg["screener"]["min_day_volume_usdt"]
+            return r["day_vol"] >= thr
+        out = out[out.apply(_pass, axis=1)]
     # امتیاز نهایی: ۵۰٪ بک‌تست + ۳۰٪ سیگنال لحظه‌ای + ۲۰٪ وین‌ریت
     if not out.empty and "ret_pct" in out.columns:
         out["rank_score"] = (out["ret_pct"].clip(-20, 50) + 20) * 0.5 + out["score_now"] * 10 * 0.3 + out["winrate"] * 0.2

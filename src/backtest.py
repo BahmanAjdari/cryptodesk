@@ -1,70 +1,92 @@
-"""بک‌تستر لانگ اسپات با حد ضرر/حد سود ATR، تریلینگ، کارمزد و خروج زمانی (بدون هلد)."""
+"""بک‌تستر لانگ اسپات — واقع‌گرایانه:
+- سیگنال کندل i در بازگشایی کندل i+1 اجرا می‌شود (نه قیمت بسته شدن همان کندل)
+- لغزش قیمت (slippage) در ورود/خروج + کارمزد هر دو سمت
+- حد ضرر/حد سود ATR، تریلینگ، خروج زمانی (بدون هلد)
+"""
 import numpy as np
 import pandas as pd
 
 
 def backtest(df: pd.DataFrame, sl_atr=1.5, tp_atr=2.5, trailing_atr=0.0,
-             fee_pct=0.1, max_holding=96, risk_pct=1.0) -> dict:
+             fee_pct=0.1, max_holding=96, risk_pct=1.0,
+             slippage_pct=0.05) -> dict:
     df = df.dropna().reset_index(drop=True)
     cash, equity_curve, trades = 10000.0, [], []
-    pos = None  # dict(entry, sl, tp, size, bars, peak, entry_idx)
+    pos = None  # dict(entry, sl, tp, notional, bars, peak, entry_idx)
+    pending = None  # سیگنال ورود ثبت‌شده که در بازگشایی کندل بعد اجرا می‌شود
 
     risk_frac = risk_pct / 100
     fee = fee_pct / 100
+    slip = slippage_pct / 100
 
     for i, row in df.iterrows():
         price = row["c"]
         atr = row["atr14"]
         if atr is None or np.isnan(atr) or atr <= 0:
+            pending = None
+            equity_curve.append(cash + (pos["notional"] * (1 + (price - pos["entry"]) / pos["entry"]) if pos else 0))
             continue
+
+        # --- اجرای ورود معوق در بازگشایی این کندل ---
+        if pending is not None and pos is None:
+            entry_px = row["o"] * (1 + slip)
+            sl_dist = sl_atr * pending["atr"]
+            if sl_dist > 0:
+                risk_amt = cash * risk_frac
+                notional = min(risk_amt / (sl_dist / entry_px), cash)
+                if notional >= 10:
+                    cash -= notional
+                    pos = {"entry": entry_px, "sl": entry_px - sl_dist,
+                           "tp": entry_px + tp_atr * pending["atr"], "notional": notional,
+                           "bars": 0, "peak": entry_px, "entry_idx": i}
+            pending = None
+            # اگر بازگشایی با گپ زیر حد ضرر بود، همان کندل خروج می‌خورد (محافظه‌کارانه)
+            if pos and row["l"] <= pos["sl"]:
+                exit_px = min(pos["sl"], row["o"]) * (1 - slip)
+                net = (exit_px - pos["entry"]) / pos["entry"] - 2 * fee
+                cash += pos["notional"] * (1 + net)
+                trades.append({"entry_idx": pos["entry_idx"], "exit_idx": i,
+                               "entry": pos["entry"], "exit": exit_px,
+                               "reason": "SL", "pnl": pos["notional"] * net,
+                               "ret": net * 100, "bars": 0})
+                pos = None
+                equity_curve.append(cash)
+                continue
 
         # --- مدیریت پوزیشن باز ---
         if pos:
             pos["bars"] += 1
             pos["peak"] = max(pos["peak"], row["h"])
-            # تریلینگ استاپ
             if trailing_atr > 0:
-                trail = pos["peak"] - trailing_atr * atr
-                pos["sl"] = max(pos["sl"], trail)
+                pos["sl"] = max(pos["sl"], pos["peak"] - trailing_atr * atr)
             exit_px, reason = None, ""
             if row["l"] <= pos["sl"]:
-                exit_px, reason = pos["sl"], "SL"
+                exit_px, reason = pos["sl"] * (1 - slip), "SL"
             elif row["h"] >= pos["tp"]:
-                exit_px, reason = pos["tp"], "TP"
+                exit_px, reason = pos["tp"] * (1 - slip), "TP"
             elif row.get("exit_long", False) or pos["bars"] >= max_holding:
-                exit_px, reason = price, "SIGNAL" if row.get("exit_long", False) else "TIME"
+                exit_px = price * (1 - slip)
+                reason = "SIGNAL" if row.get("exit_long", False) else "TIME"
             if exit_px:
-                gross = (exit_px - pos["entry"]) / pos["entry"]
-                net = gross - 2 * fee
-                pnl = pos["notional"] * net
+                net = (exit_px - pos["entry"]) / pos["entry"] - 2 * fee
                 cash += pos["notional"] * (1 + net)
                 trades.append({"entry_idx": pos["entry_idx"], "exit_idx": i,
                                "entry": pos["entry"], "exit": exit_px,
-                               "reason": reason, "pnl": pnl, "ret": net * 100,
-                               "bars": pos["bars"]})
+                               "reason": reason, "pnl": pos["notional"] * net,
+                               "ret": net * 100, "bars": pos["bars"]})
                 pos = None
                 equity_curve.append(cash)
                 continue
             equity_curve.append(cash + pos["notional"] * (1 + (price - pos["entry"]) / pos["entry"]))
             continue
 
-        # --- ورود ---
-        if row.get("enter_long", False):
-            sl_dist = sl_atr * atr
-            if sl_dist <= 0:
-                continue
-            risk_amt = cash * risk_frac
-            notional = min(risk_amt / (sl_dist / price), cash)  # سایز بر اساس ریسک
-            if notional < 10:
-                continue
-            cash -= notional
-            pos = {"entry": price, "sl": price - sl_dist,
-                   "tp": price + tp_atr * atr, "notional": notional,
-                   "bars": 0, "peak": price, "entry_idx": i}
-        equity_curve.append(cash + (pos["notional"] * (1 + (price - pos["entry"]) / pos["entry"]) if pos else 0))
+        # --- ثبت سیگنال برای کندل بعد (اجرا در بازگشایی بعدی) ---
+        if row.get("enter_long", False) and i + 1 < len(df):
+            pending = {"atr": atr}
+        equity_curve.append(cash)
 
     if pos:  # بستن انتهای دوره
-        price = df.iloc[-1]["c"]
+        price = df.iloc[-1]["c"] * (1 - slip)
         net = (price - pos["entry"]) / pos["entry"] - 2 * fee
         cash += pos["notional"] * (1 + net)
         trades.append({"entry_idx": pos["entry_idx"], "exit_idx": len(df) - 1,
@@ -90,11 +112,23 @@ def backtest(df: pd.DataFrame, sl_atr=1.5, tp_atr=2.5, trailing_atr=0.0,
     }
 
 
-def grid_search(df: pd.DataFrame, sl_opts=(1.0, 1.5, 2.0), tp_opts=(2.0, 2.5, 3.5)) -> pd.DataFrame:
-    """بهینه‌سازی کوچک SL/TP برای هر کوین."""
+def grid_search(df: pd.DataFrame, sl_opts=(1.0, 1.5, 2.0), tp_opts=(2.0, 2.5, 3.5),
+                train_frac=0.7) -> pd.DataFrame:
+    """بهینه‌سازی SL/TP با تفکیک آموزش/آزمون: انتخاب روی train، گزارش روی test.
+    مرتب‌سازی نهایی بر اساس بازده test (جلوگیری از فریب اورفیت)."""
+    n = len(df)
+    cut = max(100, int(n * train_frac))
+    train, test = df.iloc[:cut], df.iloc[cut:]
     rows = []
     for sl in sl_opts:
         for tp in tp_opts:
-            r = backtest(df, sl_atr=sl, tp_atr=tp)
-            rows.append({"sl": sl, "tp": tp, **{k: v for k, v in r.items() if k != "trades"}})
+            tr = backtest(train, sl_atr=sl, tp_atr=tp)
+            te = backtest(test, sl_atr=sl, tp_atr=tp)
+            rows.append({"sl": sl, "tp": tp,
+                         "train_ret": tr["total_return_pct"], "train_n": tr["n_trades"],
+                         "train_wr": tr["winrate_pct"],
+                         "total_return_pct": te["total_return_pct"],
+                         "n_trades": te["n_trades"], "winrate_pct": te["winrate_pct"],
+                         "profit_factor": te["profit_factor"],
+                         "max_drawdown_pct": te["max_drawdown_pct"]})
     return pd.DataFrame(rows).sort_values("total_return_pct", ascending=False)

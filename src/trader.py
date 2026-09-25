@@ -4,6 +4,7 @@
 - برای لایو: NOBITEX_TOKEN در .env + dry_run: False در config.
 - اسپات: فقط لانگ؛ خروج با OCO فروش (TP + SL هم‌زمان). هلد ممنوع (خروج زمانی).
 """
+import json
 import os
 import time
 import uuid
@@ -14,6 +15,9 @@ from .nobitex_client import NobitexClient
 from .strategies import apply_all
 from .screener import screen
 from . import news as newsmod
+
+STATE_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                           "trader_state.json")
 
 
 def load_cfg(path="config.yaml"):
@@ -36,9 +40,93 @@ class Trader:
         self.cfg = cfg
         self.client = client
         self.dry = cfg["execution"].get("dry_run", True)
-        self.positions = {}  # symbol -> {entry, sl, tp, amount, oco_ids, bars}
+        self.positions = {}  # symbol -> {entry, sl, tp, amount, buy_id, oco_ids, bars}
         self.daily_pnl = 0.0
         self.day = pd.Timestamp.utcnow().date()
+        self.allow_new = True
+        self._load_state()
+        if not self.dry:
+            self.allow_new = self.reconcile()
+
+    # ---------- persistent state ----------
+    def _save_state(self):
+        if self.dry:
+            return
+        try:
+            with open(STATE_FILE, "w") as f:
+                json.dump(self.positions, f, default=str)
+        except Exception as e:
+            print(f"[!] save trader state: {e}")
+
+    def _load_state(self):
+        if self.dry or not os.path.exists(STATE_FILE):
+            return
+        try:
+            with open(STATE_FILE) as f:
+                self.positions = json.load(f)
+            print(f"[i] loaded {len(self.positions)} stored live positions")
+        except Exception as e:
+            print(f"[!] load trader state: {e}")
+            self.positions = {}
+
+    def reconcile(self) -> bool:
+        """تطبیق پوزیشن‌های ذخیره‌شده با سفارش‌های باز صرافی پس از راه‌اندازی مجدد.
+        برمی‌گرداند آیا ورود جدید مجاز است."""
+        try:
+            open_orders = self.client.orders_list(status="open").get("orders", [])
+        except Exception as e:
+            print(f"[!] reconcile: cannot reach exchange ({e}) — ورود جدید متوقف شد")
+            return False
+        open_ids = set()
+        for o in open_orders:
+            open_ids.add(str(o.get("id")))
+            if o.get("clientOrderId"):
+                open_ids.add(str(o.get("clientOrderId")))
+        for sym in list(self.positions):
+            p = self.positions[sym]
+            oco_ids = [str(i) for i in p.get("oco_ids", []) if i]
+            buy_id = str(p.get("buy_id") or "")
+            # هیچ‌کدام از سفارش‌های این پوزیشن در صرافی باز نیستند → احتمالاً بسته/لغو شده
+            alive = any(i in open_ids for i in oco_ids + [buy_id]) if (oco_ids or buy_id) else False
+            if not alive and (oco_ids or buy_id):
+                print(f"[!] reconcile: {sym} در صرافی باز نیست (احتمالاً OCO پر شده) — از پیگیری خارج شد")
+                del self.positions[sym]
+        self._save_state()
+        return True
+
+    def _wait_fill(self, order_id=None, client_order_id=None, timeout=30) -> dict:
+        """منتظر پر شدن سفارش می‌ماند؛ وضعیت نهایی را برمی‌گرداند."""
+        deadline = time.time() + timeout
+        last = {}
+        while time.time() < deadline:
+            try:
+                r = self.client.order_status(order_id=order_id, client_order_id=client_order_id)
+                if r.get("status") == "ok":
+                    last = r["order"]
+                    if last.get("status") == "Done":
+                        return last
+                    if float(last.get("matchedAmount") or 0) > 0 and last.get("status") == "Active":
+                        time.sleep(3)
+                        continue
+                    return last
+                return last
+            except Exception as e:
+                print(f"[!] order status: {e}")
+            time.sleep(3)
+        return last
+
+    @staticmethod
+    def _filled(order: dict) -> tuple:
+        """(مقدار پرشده، میانگین قیمت)"""
+        try:
+            amt = float(order.get("matchedAmount") or 0)
+        except Exception:
+            amt = 0.0
+        try:
+            px = float(order.get("averagePrice") or 0) or float(order.get("price") or 0)
+        except Exception:
+            px = 0.0
+        return amt, px
 
     # ---------- data ----------
     def fetch_all(self):
@@ -109,22 +197,54 @@ class Trader:
             self.positions[symbol] = {"entry": price, "sl": sl, "tp": tp, "amount": amt, "bars": 0}
             return
         try:
-            o = self.client.buy_market(src, dst, amt, price_hint=price)
-            print("  order:", o)
-            # خروج OCO: فروش هم‌زمان TP + SL
-            oco = self.client.oco_exit(src, dst, amt, f"{tp:.8f}", f"{sl:.8f}",
+            buy_cid = f"bot-buy-{uuid.uuid4().hex[:8]}"
+            o = self.client.order_add(side="buy", src=src, dst=dst, amount=amt,
+                                      price=price, execution="market",
+                                      client_order_id=buy_cid)
+            if o.get("status") != "ok" or "order" not in o:
+                print(f"[!] buy rejected {symbol}: {o}")
+                return
+            buy = self._wait_fill(order_id=o["order"].get("id"), client_order_id=buy_cid)
+            filled, avg = self._filled(buy)
+            if filled <= 0:
+                print(f"[!] buy {symbol} پر نشد — OCO ثبت نمی‌شود")
+                try:
+                    self.client.order_cancel(order_id=o["order"].get("id"))
+                except Exception:
+                    pass
+                return
+            if filled < amt * 0.999:
+                print(f"[!] buy {symbol} جزئی پر شد ({filled}/{amt}) — OCO با مقدار واقعی")
+            # خروج OCO با مقدار پرشده واقعی و قیمت میانگین واقعی
+            oco = self.client.oco_exit(src, dst, f"{filled:.8f}", f"{tp:.8f}", f"{sl:.8f}",
                                        f"{sl * 0.999:.8f}", client_order_id=cid)
             print("  oco:", oco)
-            self.positions[symbol] = {"entry": price, "sl": sl, "tp": tp,
-                                      "amount": amt, "bars": 0, "oco": oco}
+            oco_ids = [x.get("id") for x in oco.get("orders", [])] if oco.get("status") == "ok" else []
+            if not oco_ids:
+                print(f"[!] OCO {symbol} ثبت نشد — با مارکت خارج شو! {oco}")
+                try:
+                    print(self.client.sell_market(src, dst, f"{filled:.8f}"))
+                except Exception as e:
+                    print(f"[!] emergency exit failed: {e}")
+                return
+            self.positions[symbol] = {"entry": avg or price, "sl": sl, "tp": tp,
+                                      "amount": filled, "bars": 0,
+                                      "buy_id": o["order"].get("id"), "oco_ids": oco_ids}
+            self._save_state()
         except Exception as e:
             print(f"[!] enter failed {symbol}: {e}")
 
     def manage(self, symbol, row):
-        """بررسی خروج برای پوزیشن باز (حالت dry_run؛ در لایو OCO صرافی فعال است + خروج زمانی)."""
+        """بررسی خروج. در لایو اول OCO صرافی استعلام می‌شود (TP/SL صرافی) و
+        برای خروج دستی اول OCO لغو بعد مارکت فروخته می‌شود."""
         if symbol not in self.positions:
             return
         p = self.positions[symbol]
+        # --- مسیر لایو: OCO صرافی حرف اول را می‌زند ---
+        if not self.dry and p.get("oco_ids"):
+            done_leg = self._check_oco(symbol, p)
+            if done_leg:
+                return  # صرافی خودش بست؛ ثبت و حذف انجام شد
         p["bars"] += 1
         price = row["c"]
         # تریلینگ (فقط اگر در کانفیگ روشن باشد)
@@ -133,6 +253,7 @@ class Trader:
             # تریل بر اساس سقف از ورود
             p["peak"] = max(p.get("peak", p["entry"]), row["h"])
             p["sl"] = max(p["sl"], p["peak"] - tmult * row["atr14"])
+            self._save_state()
         reason = None
         if row["l"] <= p["sl"]:
             reason = "SL"
@@ -146,12 +267,51 @@ class Trader:
             pnl = (price - p["entry"]) / p["entry"] * 100
             print(f"[EXIT:{reason}] {symbol} @ {price:.4f} pnl={pnl:.2f}% bars={p['bars']}")
             if not self.dry:
-                try:
-                    src, dst = split_symbol(symbol)
-                    print(self.client.sell_market(src, dst, p["amount"]))
-                except Exception as e:
-                    print("[!] exit failed:", e)
-            del self.positions[symbol]
+                self._live_exit(symbol, p, reason)
+            else:
+                del self.positions[symbol]
+
+    def _check_oco(self, symbol, p) -> bool:
+        """استعلام پایه‌های OCO؛ اگر یکی Done شده، پوزیشن را می‌بندد. True یعنی بسته شد."""
+        for oid in p.get("oco_ids", []):
+            try:
+                r = self.client.order_status(order_id=int(oid))
+            except Exception as e:
+                print(f"[!] oco status {oid}: {e}")
+                continue
+            if r.get("status") != "ok":
+                continue
+            o = r["order"]
+            if o.get("status") == "Done":
+                filled, avg = self._filled(o)
+                leg = o.get("execution", "")
+                reason = "TP" if "Limit" in str(leg) and "Stop" not in str(leg) else "SL"
+                print(f"[EXIT:{reason}@exchange] {symbol} @ {avg} amt={filled}")
+                del self.positions[symbol]
+                self._save_state()
+                return True
+        return False
+
+    def _live_exit(self, symbol, p, reason):
+        """خروج دستی لایو: اول لغو OCO، بعد فروش مارکت به مقدار واقعی."""
+        src, dst = split_symbol(symbol)
+        for oid in p.get("oco_ids", []):
+            try:
+                print(self.client.order_cancel(order_id=int(oid)))
+            except Exception as e:
+                print(f"[!] cancel {oid}: {e}")
+        try:
+            o = self.client.sell_market(src, dst, p["amount"])
+            print(o)
+            if o.get("status") == "ok" and "order" in o:
+                s = self._wait_fill(order_id=o["order"].get("id"))
+                filled, avg = self._filled(s)
+                print(f"[EXIT:{reason}] {symbol} sold {filled} @ {avg}")
+        except Exception as e:
+            print(f"[!] exit failed {symbol}: {e} — پوزیشن نگه داشته شد")
+            return
+        del self.positions[symbol]
+        self._save_state()
 
     # ---------- main loop ----------
     def scan_once(self):
@@ -172,6 +332,8 @@ class Trader:
                     print("[!] manage:", e)
         if not g["allow"]:
             print("[BLOCK] ورود جدید مجاز نیست"); return
+        if not self.allow_new:
+            print("[SKIP] تطبیق با صرافی ناموفق بود — ورود جدید مجاز نیست"); return
         if len(self.positions) >= self.cfg["risk"]["max_open_positions"]:
             print("[SKIP] سقف پوزیشن باز"); return
         table = screen(data, self.cfg)
