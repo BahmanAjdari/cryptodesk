@@ -1,0 +1,85 @@
+base_url: https://apiv2.nobitex.ir
+candles: 500
+execution:
+  dry_run: true
+  order_type: market
+  poll_seconds: 120
+  quote_asset: USDT
+news:
+  cryptopanic_token: ''
+  cryptopanic_url: https://cryptopanic.com/api/v1/posts/?auth_token={token}&public=true&kind=news
+  fear_greed_url: https://api.alternative.me/fng/?limit=7&format=json
+paper_coins:
+- BTC
+- ETH
+- DOGE
+- SOL
+- XRP
+- BNB
+- AVAX
+- TRX
+- LINK
+- LTC
+- USDT
+- ADA
+- NEAR
+- 1K_SHIB
+- 1M_PEPE
+- ONDO
+- CVC
+- CAKE
+- BICO
+- FIL
+- DOT
+- CELR
+- SUI
+- PROM
+- 100K_FLOKI
+- XLM
+regime:
+  adx_trend_threshold: 20
+  block_on_extreme_fear_bull: false
+  block_on_extreme_greed_bear: true
+  block_trading_if_negative_news: true
+  btc_trend_filter: true
+risk:
+  fee_pct: 0.1
+  kill_cool_h: 4
+  kill_drop_pct: 3.0
+  max_daily_loss_pct: 3.0
+  max_holding_candles: 96
+  max_open_positions: 2
+  sl_atr_mult: 1.5
+  tp_atr_mult: 2.5
+  trade_risk_pct: 1.0
+  trailing_atr_mult: 0.0
+screener:
+  min_day_volume_usdt: 50000
+  min_signal_score: 2.0
+symbols:
+- BTCUSDT
+- ETHUSDT
+- DOGEUSDT
+- SOLUSDT
+- XRPUSDT
+- BNBUSDT
+- AVAXUSDT
+- TRXUSDT
+- LINKUSDT
+- LTCUSDT
+- ADAUSDT
+- NEARUSDT
+- 1K_SHIBUSDT
+- 1M_PEPEUSDT
+- ONDOUSDT
+- CVCUSDT
+- CAKEUSDT
+- BICOUSDT
+- FILUSDT
+- DOTUSDT
+- CELRUSDT
+- SUIUSDT
+- PROMUSDT
+- 100K_FLOKIUSDT
+- XLMUSDT
+timeframe: '15'

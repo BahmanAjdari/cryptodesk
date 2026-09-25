@@ -1,0 +1,22 @@
+# Secrets & local state — هرگز کامیت نشود
+.env
+paper_state.json
+known_markets.json
+daemon_heartbeat.json
+paper_scan.flag
+.caffeinate.pid
+.listing_check
+
+# Logs
+*.log
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# macOS / editors
+.DS_Store
+.vscode/
+.idea/
