@@ -13,6 +13,12 @@ STATE_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file
                            "paper_state.json")
 
 
+def _state_path(path=None):
+    """مسیر فایل وضعیت. تست‌ها PAPER_STATE_FILE یا path صریح بدهند —
+    (نکته: آرگومان پیش‌فرض save عمداً None است تا بازنویسی مسیر همیشه اثر کند)."""
+    return path or os.getenv("PAPER_STATE_FILE") or STATE_FILE
+
+
 def irt_symbol(coin: str) -> str:
     return f"{coin.upper()}IRT"
 
@@ -29,15 +35,15 @@ def new_account(capital_toman: float) -> dict:
     }
 
 
-def save(acct: dict, path=STATE_FILE):
-    with open(path, "w") as f:
+def save(acct: dict, path=None):
+    with open(_state_path(path), "w") as f:
         json.dump(acct, f, default=str)
 
 
-def load(path=STATE_FILE):
-    if not os.path.exists(path):
+def load(path=None):
+    if not os.path.exists(_state_path(path)):
         return None
-    with open(path) as f:
+    with open(_state_path(path)) as f:
         return json.load(f)
 
 
