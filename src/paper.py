@@ -23,6 +23,44 @@ def irt_symbol(coin: str) -> str:
     return f"{coin.upper()}IRT"
 
 
+HOT_TTL_H = 4  # هر ۴ ساعت لیست کوین‌های داغ تازه شود
+HOT_LIMIT = 8
+
+
+def refresh_hot_coins(acct: dict, cfg: dict, client, verbose=print) -> list:
+    """کوین‌های داغ ۲۴ ساعته را پیدا کرده و به لیست زیر نظر اضافه می‌کند.
+
+    - کوین داغی که دیگر داغ نیست حذف می‌شود (مگر پوزیشن باز داشته باشد).
+    - کوین‌های انتخابی کاربر (acct["coins"]) هرگز حذف نمی‌شوند.
+    - نتیجه در acct["hot_coins"] ذخیره می‌شود و ۴ ساعت معتبر است.
+    """
+    now = time.time()
+    if now < float(acct.get("hot_next", 0)) and acct.get("hot_coins") is not None:
+        return acct.get("hot_coins") or []
+    try:
+        from .discover import hot_movers, verify_batch
+        found = hot_movers(client, cfg, limit=HOT_LIMIT)
+        names = [r["coin"] for r in found]
+        ok = verify_batch(client, names) if names else []
+        prev = set(acct.get("hot_coins") or [])
+        held = {s.replace("IRT", "") for s in acct.get("positions", {})}
+        # نگه‌داشتن کوین داغِ دارای پوزیشن باز + حذف سردشده‌ها
+        keep_hot = {c for c in prev if c in ok or (c in held and c in prev)}
+        new_set = sorted(set(ok) | (keep_hot & held) - set(acct.get("coins") or []))
+        added = sorted(set(new_set) - prev)
+        dropped = sorted(prev - set(new_set) - held)
+        acct["hot_coins"] = new_set
+        acct["hot_next"] = now + HOT_TTL_H * 3600
+        if added:
+            verbose(f"[HOT+] {', '.join(added)} به لیست زیر نظر اضافه شد")
+        if dropped:
+            verbose(f"[HOT-] {', '.join(dropped)} از لیست داغ خارج شد")
+    except Exception as e:
+        verbose(f"[HOT!] خطا در تازه‌سازی کوین‌های داغ: {e}")
+        acct["hot_next"] = now + 3600  # یک ساعت بعد دوباره امتحان
+    return acct.get("hot_coins") or []
+
+
 def new_account(capital_toman: float) -> dict:
     return {
         "active": True,
@@ -79,7 +117,10 @@ def scan_step(acct: dict, client, cfg: dict, coins=None, verbose=print,
     notify = get_notifier() if notify_opt else None
 
     coins = coins or acct.get("coins") or cfg.get("paper_coins",
-                ["BTC", "ETH", "SOL", "DOGE", "XRP", "BNB", "AVAX", "TRX", "LINK", "LTC", "USDT"])
+                ["BTC", "ETH", "SOL", "DOGE", "XRP", "BNB", "AVAX", "TRX", "LINK", "LTC"])
+    # استیبل‌کوین معامله نشود (تتر/دلار عملاً شرط روی نرخ ارز است، نه کوین)
+    _stable = {"USDT", "USDC", "FDUSD", "TUSD", "DAI", "BUSD", "PYUSD", "UST"}
+    coins = [c for c in coins if str(c).upper() not in _stable]
     r = cfg["risk"]
     fee = r["fee_pct"] / 100
     tf = str(acct.get("timeframe", cfg["timeframe"]))
@@ -93,6 +134,12 @@ def scan_step(acct: dict, client, cfg: dict, coins=None, verbose=print,
     day_loss_lim = float(acct.get("max_daily_loss_pct", r.get("max_daily_loss_pct", 3.0)))
 
     # --- دریافت داده ---
+    # کوین‌های داغ ۲۴ ساعته (هر ۴ ساعت تازه می‌شود) به لیست اضافه می‌شوند
+    hot = refresh_hot_coins(acct, cfg, client, verbose=verbose)
+    coins = list(dict.fromkeys(coins + hot))
+    # پوزیشن باز همیشه باید خوانده شود، حتی اگر از لیست داغ خارج شده باشد
+    held = [s[:-3] if s.endswith("IRT") else s for s in acct.get("positions", {})]
+    coins = list(dict.fromkeys(coins + held))
     data, frames = {}, {}
     for coin in coins:
         sym = irt_symbol(coin)

@@ -89,3 +89,36 @@ def newly_listed(client) -> list:
     if new:
         save_baseline(cur)
     return new
+
+
+STABLES = {"USDT", "USDC", "FDUSD", "TUSD", "DAI", "BUSD", "PYUSD", "UST"}
+
+
+def hot_movers(client, cfg, limit=8, min_vol_usdt=50000, min_chg_pct=8.0):
+    """کوین‌های داغ ۲۴ ساعته نوبیتکس که هنوز زیر نظر ما نیستند.
+
+    شرط: در هر دو بازار تتری و تومانی موجود، حجم روزانه کافی،
+    رشد ۲۴ ساعته حداقل min_chg_pct. خروجی: [{coin, chg_24h, vol_usdt}] مرتب بر اثر رشد.
+    """
+    uni = _universe(cfg) | STABLES
+    out = []
+    for base, e in all_markets(client).items():
+        if base in uni or not (e["usdt"] and e["irt"]):
+            continue
+        if e["vol_usdt"] < min_vol_usdt or e["chg_pct"] < min_chg_pct:
+            continue
+        out.append({"coin": base, "chg_24h": e["chg_pct"],
+                    "vol_usdt": round(e["vol_usdt"], 0)})
+    return sorted(out, key=lambda r: -r["chg_24h"])[:limit]
+
+
+def verify_batch(client, bases: list) -> list:
+    """فقط کوین‌هایی که کندل 15m هر دو بازار واقعاً می‌دهند."""
+    ok = []
+    for b in bases:
+        try:
+            verify(client, b)
+            ok.append(b)
+        except Exception:
+            continue
+    return ok

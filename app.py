@@ -514,6 +514,10 @@ with tab5:
         m4.metric("پوزیشن باز", len(a["positions"]))
         st.caption(f"آخرین اسکن دیمن: {a.get('last_scan')} | وضعیت: فعال ✅" if a.get("active")
                    else f"آخرین اسکن دیمن: {a.get('last_scan')} | وضعیت: متوقف ⏸️ (تاگل «معامله خودکار روشن» خاموش است — روشنش کن)")
+        _hot = a.get("hot_coins") or []
+        if _hot:
+            st.caption("🔥 کوین‌های داغ خودکار (هر ۴ ساعت تازه می‌شود، خارج از لیست انتخابی تو): "
+                       + "، ".join(_hot))
         if a["positions"]:
             st.write("**پوزیشن‌های باز:**")
             rows = [{"نماد": s, "ورود": f"{p['entry']:,.0f}",
