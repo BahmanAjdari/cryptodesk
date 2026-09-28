@@ -70,7 +70,8 @@ risk:
   sl_atr_mult: 1.5
   tp_atr_mult: 2.5
   trade_risk_pct: 1.0
-  trailing_atr_mult: 1.5
+  trailing_atr_mult: 2.5
+  breakeven_atr_mult: 1.5
 screener:
   min_day_volume_usdt: 50000
   min_day_volume_irt: 5000000000

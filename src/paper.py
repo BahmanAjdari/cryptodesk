@@ -129,6 +129,7 @@ def scan_step(acct: dict, client, cfg: dict, coins=None, verbose=print,
     sl_m = float(acct.get("sl_atr", r["sl_atr_mult"]))
     tp_m = float(acct.get("tp_atr", r["tp_atr_mult"]))
     trail_m = float(acct.get("trail_atr", r.get("trailing_atr_mult", 0.0) or 0.0))
+    be_m = float(acct.get("breakeven_atr", r.get("breakeven_atr_mult", 1.5) or 1.5))
     kill_drop = float(acct.get("kill_drop_pct", r.get("kill_drop_pct", 3.0)))
     kill_cool_h = float(acct.get("kill_cool_h", r.get("kill_cool_h", 4)))
     day_loss_lim = float(acct.get("max_daily_loss_pct", r.get("max_daily_loss_pct", 3.0)))
@@ -227,9 +228,23 @@ def scan_step(acct: dict, client, cfg: dict, coins=None, verbose=print,
             price = float(row["c"])
             atr = float(row["atr14"]) if pd.notna(row["atr14"]) else 0.0
             p["bars"] = p.get("bars", 0) + 1
-            if trail_m > 0 and atr > 0:
+            # --- مدیریت حد ضرر: Breakeven + Trailing ---
+            # ۱) به حد ضرر اولیه (sl) می‌مانیم تا قیمت به سود breakeven_atr×ATR برسد
+            # ۲) پس از رسیدن به سود breakeven، حد ضرر به قیمت ورود (breakeven) منتقل می‌شود
+            # ۳) از آن لحظه، تریلینگ با trail_atr×ATR از سقف (peak) فعال می‌شود
+            moved = price - p["entry"]
+            be_dist = be_m * atr if atr > 0 else 0
+            trail_dist = trail_m * atr if atr > 0 else 0
+
+            if not p.get("be_hit", False) and moved >= be_dist:
+                # رسیدن به سود breakeven: حد ضرر به ورود منتقل شود
+                p["sl"] = max(p["sl"], p["entry"])
+                p["be_hit"] = True
+
+            if p.get("be_hit", False) and trail_dist > 0:
+                # تریلینگ پس از breakeven: از سقف (peak) به فاصله trail_atr×ATR
                 p["peak"] = max(p.get("peak", p["entry"]), float(row["h"]))
-                p["sl"] = max(p["sl"], p["peak"] - trail_m * atr)
+                p["sl"] = max(p["sl"], p["peak"] - trail_dist)
             reason = None
             if row["l"] <= p["sl"]:
                 reason, exit_px = "SL", p["sl"]
