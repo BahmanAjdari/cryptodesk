@@ -396,18 +396,23 @@ with tab5:
     tp_m = sc2.slider("حد سود (×ATR)", 1.0, 5.0, def_tp, 0.5)
     st.markdown("**🛡️ مدیریت ریسک**")
     def_trail = float((acct or {}).get("trail_atr", cfg["risk"].get("trailing_atr_mult", 0.0) or 0.0))
+    def_be = float((acct or {}).get("breakeven_atr", cfg["risk"].get("breakeven_atr_mult", 1.5) or 1.5))
     def_kill = float((acct or {}).get("kill_drop_pct", cfg["risk"].get("kill_drop_pct", 3.0)))
     def_cool = float((acct or {}).get("kill_cool_h", cfg["risk"].get("kill_cool_h", 4)))
     def_day = float((acct or {}).get("max_daily_loss_pct", cfg["risk"].get("max_daily_loss_pct", 3.0)))
     rc1, rc2 = st.columns(2)
     trail_m = rc1.slider("تریلینگ‌استاپ (×ATR) — ۰ = خاموش", 0.0, 5.0, def_trail, 0.5,
                          help="وقتی قیمت بالا می‌رود حد ضرر هم بالا می‌آید و سود قفل می‌شود. ۲.۵ به بالا پیشنهاد می‌شود.")
-    day_m = rc2.slider("سقف ضرر روزانه (٪) — ۰ = خاموش", 0.0, 10.0, def_day, 0.5,
-                       help="اگه ضرر امروز به این سقف برسد، خرید تا فردا متوقف می‌شود.")
+    be_m = rc2.slider("بریک‌اوان (×ATR) — سود برای قفل حد ضرر", 0.0, 3.0, def_be, 0.5,
+                      help="وقتی سود به این سطح برسد، حد ضرر به قیمت ورود منتقل می‌شود. ۱.۵ پیشنهاد می‌شود.")
+    st.markdown("**🛡️ مدیریت ریسک پیشرفته**")
     rc3, rc4 = st.columns(2)
     kill_m = rc3.slider("کیل‌سوییچ: ریزش BTC در ۶۰ دقیقه (٪) — ۰ = خاموش", 0.0, 10.0, def_kill, 0.5,
                         help="اگه بیت‌کوین این‌قدر بریزد، همه فوری بسته و خرید متوقف می‌شود.")
     cool_m = rc4.slider("توقف خرید بعد از کیل‌سوییچ (ساعت)", 1.0, 12.0, def_cool, 1.0)
+    rc5, rc6 = st.columns(2)
+    day_m = rc5.slider("سقف ضرر روزانه (٪) — ۰ = خاموش", 0.0, 10.0, def_day, 0.5,
+                       help="اگه ضرر امروز به این سقف برسد، خرید تا فردا متوقف می‌شود.")
     b1, b2, b3 = st.columns(3)
     if b1.button("🟢 شروع / شروع مجدد با این مبلغ", key="paper_start"):
         acct = new_account(cap_m * 1_000_000)
@@ -420,6 +425,7 @@ with tab5:
         acct["sl_atr"] = sl_m
         acct["tp_atr"] = tp_m
         acct["trail_atr"] = trail_m
+        acct["breakeven_atr"] = be_m
         acct["kill_drop_pct"] = kill_m
         acct["kill_cool_h"] = cool_m
         acct["max_daily_loss_pct"] = day_m
@@ -438,6 +444,16 @@ with tab5:
             _os.remove(_SF)
         acct = None
         st.rerun()
+    # --- تنظیمات ذخیره خودکار (هر رندر) ---
+    if acct is not None:
+        acct["sl_atr"] = sl_m
+        acct["tp_atr"] = tp_m
+        acct["trail_atr"] = trail_m
+        acct["breakeven_atr"] = be_m
+        acct["kill_drop_pct"] = kill_m
+        acct["kill_cool_h"] = cool_m
+        acct["max_daily_loss_pct"] = day_m
+        paper_save(acct)
     # --- وضعیت دیمن پس‌زمینه ---
     import json as _json
     _hb_path = "daemon_heartbeat.json"
